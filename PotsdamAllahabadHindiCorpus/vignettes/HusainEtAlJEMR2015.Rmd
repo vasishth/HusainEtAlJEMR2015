@@ -1,0 +1,977 @@
+---
+title: "Husain Et Al JEMR 2015"
+author: "Shravan Vasishth"
+date: "3/29/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+This is code accompanying the Husain, Vasishth, Narayanan 2015 paper published in JEMR.
+
+Loading libraries and data:
+
+```{r loadlibrariesdata}
+library(lme4)
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+library(lattice)
+library(car)
+library(xtable)
+
+### Item level data:
+hnditem_1<-read.table("../data/hnd1_aswords_stats",header=T)
+hnditem_1$item<-factor(paste("block1_",hnditem_1$item,sep=""))
+hnditem_2<-read.table("../data/hnd2_aswords_stats",header=T)
+hnditem_2$item<-factor(paste("block2_",hnditem_2$item,sep=""))
+
+hnditem<-rbind(hnditem_1,hnditem_2)
+
+#head(hnditem)
+## sanity check:
+#xtabs(~item+roi,hnditem)
+#length(unique(hnditem$item))
+## 79+74=153
+
+etm_predictors<-hnditem[,c(3,5,6,7,8,9,10,12,13)]
+#dim(etm_predictors)
+
+#summary(etm_predictors)
+
+#splom(~etm_predictors, data = etm_predictors,cex.lab=.5)
+cors<-cor(etm_predictors,use="na.or.complete")
+
+## replace all lower diagonals with NA:
+cors[lower.tri(cors,diag=TRUE)] <- NA
+cors<-round(cors,digits=2)
+```
+
+Correlations between predictors:
+
+```{r xtablecorrelations,echo=FALSE,results="asis"}
+print(xtable(cors))
+```
+
+
+## Load eyetracking data for Hindi
+
+```{r loadandpreparedata,echo=FALSE}
+# Including block analysis:
+hindi<-read.table("../data/hindi_JEMR.txt",header=TRUE)
+etm_hindi<-subset(hindi,expt!="prac")
+
+etm_h<-etm_hindi
+#unique(etm_h$block)
+## center block factor:
+etm_h$c_block<-ifelse(etm_h$block==1,
+                      -1,1)
+
+etm_h$expt<-factor(etm_h$expt)
+item2<-paste(etm_h$expt,"_",
+             etm_h$item,sep="")
+etm_h$item2<-factor(item2)
+
+etm_h$subj<-factor(etm_h$subj)
+
+## Mark beginning and end of sentence
+## (data to be exluded):
+start<-ifelse(etm_h$roi==1,"start",0)
+for(i in 2:length(start)){
+  if(start[i]=="start"){
+    start[i-1]<-"end"
+  }
+}
+
+etm_h$startorend<-factor(start)
+etm_h<-subset(etm_h,startorend==0)
+```
+
+Next, we define several probability measures:
+
+```{r compute probabilitymeasures}
+## skipping probability:
+P0<-ifelse(etm_h$FFD==0,1,0)
+## prob of fixating exactly once:
+P1<-ifelse(etm_h$SFD==etm_h$FFD,1,0)
+## prob of fixating > once:
+P2<-ifelse(etm_h$FFD<etm_h$FPRT & etm_h$FFP==1,1,0)
+
+etm_h$P0<-P0
+etm_h$P1<-P1
+etm_h$P2<-P2
+
+#add a column for first pass regression probablity
+FPRP<-ifelse(etm_h$RBRC==0,0,1)
+etm_h$FPRP<-FPRP
+
+#colnames(etm_h)
+#head(etm_h)
+
+## predictors
+#head(etm_h[c(22,24,25,27,29,32,33,34)])
+#summary(etm_h[c(22,24,25,27,29,32,33,34)])
+```
+
+Scale predictors:
+
+```{r centerpredictors}
+## center all predictors:
+etm_h$c_syll_len<-scale(etm_h$syll_len,scale=T)
+etm_h$c_word_complex<-scale(etm_h$word_complex,scale=T)
+etm_h$c_word_freq<-scale(etm_h$word_freq,scale=T)
+etm_h$c_word_bifreq<-scale(etm_h$word_bifreq,scale=T)
+etm_h$c_word_len<-scale(etm_h$word_len,scale=T)
+etm_h$c_IC<-scale(etm_h$IC,scale=T)
+etm_h$c_SC<-scale(etm_h$SC,scale=T)
+
+#colnames(etm_h)
+```
+
+Remove two items:
+
+```{r }
+#remove sentences 64 and 70 from hnd2
+#Modification date:3/02/2016 (after article publication)
+etm_h <- subset(etm_h, item2!='hnd2_70')
+etm_h <- subset(etm_h, item2!='hnd2_64')
+```
+
+Create data subsets for different dependent measures:
+
+```{r createDVsubsets}
+## create FPRT, RPD, TFT data-sets:
+etm_FPRT<-subset(etm_h,FPRT>0 & c_word_bifreq!="NA")
+
+#summary(etm_FPRT)
+
+etm_RPD<-subset(etm_h,RPD>0)[,c(1,35,14,34,41:47)]
+etm_TFT<-subset(etm_h,TFT>0)[,c(1,35,13,34,41:47)]
+```
+
+# lmer analyses
+
+```{r}
+## syllable length and word length are correlated .85
+m_FPRT<-lmer(log(FPRT)~c_block*(c_word_complex+c_word_freq+ c_word_bifreq+c_syll_len+c_IC+c_SC)+(c_block*(c_word_complex+c_word_freq+ c_word_bifreq+c_syll_len+c_IC+c_SC)||subj)+(1|item2),etm_FPRT)
+
+m_RPD<-lmer(log(RPD)~c_block*(c_word_complex+c_word_freq+ c_word_bifreq+c_syll_len+c_IC+c_SC)+(c_block*(c_word_complex+c_word_freq+ c_word_bifreq+c_syll_len+c_IC+c_SC)||subj)+(1|item2),etm_RPD)
+
+m_TFT<-lmer(log(TFT)~c_block*(c_word_complex+c_word_freq+ c_word_bifreq+c_syll_len+c_IC+c_SC)+(c_block*(c_word_complex+c_word_freq+ c_word_bifreq+c_syll_len+c_IC+c_SC)||subj)+(1|item2),etm_TFT)
+```
+
+Residuals and ACFs:
+
+```{r residualsANDacf}
+qqPlot(residuals(m_FPRT))
+qqPlot(residuals(m_RPD))
+qqPlot(residuals(m_TFT))
+
+acf(residuals(m_FPRT))
+acf(residuals(m_RPD))
+## MA(1)?
+acf(residuals(m_TFT))
+```
+
+```{r lmerresults}
+summary(m_FPRT)
+summary(m_RPD)
+summary(m_TFT)
+```
+
+# Stan analyses
+
+## First-pass reading time analysis
+
+```{r}
+## Stan fit for log FPRT:
+
+dat_logFPRT <- list(mu_prior=rep(0,14),
+              subject=as.integer(factor(etm_FPRT$subj)),
+              item=as.integer(factor(etm_FPRT$item2)),
+              y=log(etm_FPRT$FPRT), ## dep. var.
+              sl = as.vector(etm_FPRT$c_syll_len),
+              complexity = as.vector(etm_FPRT$c_word_complex),
+              freq = as.vector(etm_FPRT$c_word_freq),
+              bifreq = as.vector(etm_FPRT$c_word_bifreq),
+              IC = as.vector(etm_FPRT$c_IC),
+              SC = as.vector(etm_FPRT$c_SC),
+              bl = etm_FPRT$c_block,
+              sl_bl = as.vector(etm_FPRT$c_block*etm_FPRT$c_syll_len),
+              complexity_bl = as.vector(etm_FPRT$c_block*etm_FPRT$c_word_complex),
+              freq_bl = as.vector(etm_FPRT$c_block*etm_FPRT$c_word_freq),
+              bifreq_bl = as.vector(etm_FPRT$c_block*etm_FPRT$c_word_bifreq),
+              IC_bl =  as.vector(etm_FPRT$c_block*etm_FPRT$c_IC),
+              SC_bl = as.vector(etm_FPRT$c_block*etm_FPRT$c_SC),
+              N = nrow(etm_FPRT),
+              I = length(unique(etm_FPRT$subj)),
+              K = length(unique(etm_FPRT$item2)))
+
+#str(dat_logFPRT)
+#sort(unique(dat_logFPRT$item))
+#sort(unique(dat_logFPRT$subj))
+       
+model_fprt <- stan("HusainEtAlHindiET.Stan", 
+                          data = dat_logFPRT, 
+                          chains = 0)
+       
+library(parallel)
+       
+sflist <- mclapply(1:4, mc.cores = 4, 
+                  function(i) stan(fit = model_fprt, 
+                                   data = dat_logFPRT,
+                                   iter=2000,
+                                   chains = 1, 
+                                   chain_id = i, 
+                                   refresh = -1))
+       
+fitFPRT <- sflist2stanfit(sflist)
+```
+   
+```{r echo=FALSE}       
+plot(fitFPRT)
+```
+
+Save results as a matrix:
+
+```{r, include=FALSE,eval=FALSE}
+mcmcFPRT<-as.matrix(fitFPRT)
+#colnames(mcmcFPRT)[1:14]
+save(mcmcFPRT,file="mcmcFPRT.Rda")
+```
+
+## Regression path duration
+
+```{r}
+#summary(etm_RPD)
+etm_RPD<-subset(etm_RPD,c_word_bifreq!="NA")
+
+dat_logRPD <- list(mu_prior=rep(0,14),
+                    subject=as.integer(factor(etm_RPD$subj)),
+                    item=as.integer(factor(etm_RPD$item2)),
+                    y=log(etm_RPD$RPD), ## dep. var.
+                    sl = as.vector(etm_RPD$c_syll_len),
+                    complexity = as.vector(etm_RPD$c_word_complex),
+                    freq = as.vector(etm_RPD$c_word_freq),
+                    bifreq = as.vector(etm_RPD$c_word_bifreq),
+                    IC = as.vector(etm_RPD$c_IC),
+                    SC = as.vector(etm_RPD$c_SC),
+                    bl = etm_RPD$c_block,
+                    sl_bl = as.vector(etm_RPD$c_block*etm_RPD$c_syll_len),
+                    complexity_bl = as.vector(etm_RPD$c_block*etm_RPD$c_word_complex),
+                    freq_bl = as.vector(etm_RPD$c_block*etm_RPD$c_word_freq),
+                    bifreq_bl = as.vector(etm_RPD$c_block*etm_RPD$c_word_bifreq),
+                    IC_bl =  as.vector(etm_RPD$c_block*etm_RPD$c_IC),
+                    SC_bl = as.vector(etm_RPD$c_block*etm_RPD$c_SC),
+                    N = nrow(etm_RPD),
+                    I = length(unique(etm_RPD$subj)),
+                    K = length(unique(etm_RPD$item2)))
+
+#str(dat_logRPD)
+
+model_rpd <- stan("HusainEtAlHindiET.Stan", 
+                 data = dat_logRPD, 
+                 chains = 0)
+       
+sflist <- mclapply(1:4, mc.cores = 4, 
+                  function(i) stan(fit = model_rpd, 
+                                   data = dat_logRPD,
+                                   iter=2000,
+                                   chains = 1, 
+                                   chain_id = i, 
+                                   refresh = -1))
+       
+fitRPD <- sflist2stanfit(sflist)
+```
+
+```{r eval=FALSE}
+plot(fitRPD)
+```
+
+```{r eval=FALSE}
+mcmcRPD<-as.matrix(fitRPD)
+
+save(mcmcRPD,file="mcmcRPD.Rda")
+```
+
+## Total reading time
+
+```{r}
+#summary(etm_TFT)
+etm_TFT<-subset(etm_TFT,c_word_bifreq!="NA")
+etm_TFT<-subset(etm_TFT,c_word_freq!="NA")
+
+dat_logTFT <- list(mu_prior=rep(0,14),
+                   subject=as.integer(factor(etm_TFT$subj)),
+                   item=as.integer(factor(etm_TFT$item2)),
+                   y=log(etm_TFT$TFT), ## dep. var.
+                   sl = as.vector(etm_TFT$c_syll_len),
+                   complexity = as.vector(etm_TFT$c_word_complex),
+                   freq = as.vector(etm_TFT$c_word_freq),
+                   bifreq = as.vector(etm_TFT$c_word_bifreq),
+                   IC = as.vector(etm_TFT$c_IC),
+                   SC = as.vector(etm_TFT$c_SC),
+                   bl = etm_TFT$c_block,
+                   sl_bl = as.vector(etm_TFT$c_block*etm_TFT$c_syll_len),
+                   complexity_bl = as.vector(etm_TFT$c_block*etm_TFT$c_word_complex),
+                   freq_bl = as.vector(etm_TFT$c_block*etm_TFT$c_word_freq),
+                   bifreq_bl = as.vector(etm_TFT$c_block*etm_TFT$c_word_bifreq),
+                   IC_bl =  as.vector(etm_TFT$c_block*etm_TFT$c_IC),
+                   SC_bl = as.vector(etm_TFT$c_block*etm_TFT$c_SC),
+                   N = nrow(etm_TFT),
+                   I = length(unique(etm_TFT$subj)),
+                   K = length(unique(etm_TFT$item2)))
+
+str(dat_logTFT)
+
+              
+model_tft <- stan("HusainEtAlHindiET.Stan", 
+                   data = dat_logTFT, 
+                   chains = 0)
+       
+sflist <- mclapply(1:4, mc.cores = 4, 
+                  function(i) stan(fit = model_tft, 
+                                   data = dat_logTFT,
+                                   iter=2000,
+                                   chains = 1, 
+                                   chain_id = i, 
+                                   refresh = -1))
+              
+fitTFT <- sflist2stanfit(sflist)
+```
+   
+```{r eval=FALSE}       
+plot(fitTFT)
+```
+
+```{r eval=FALSE}
+mcmcTFT<-as.matrix(fitTFT)
+       
+save(mcmcTFT,file="mcmcTFT.Rda")
+```       
+
+# Saccades analysis
+
+```{r}
+#character roi, saccades data
+load("../data/H_allsubjects-fix-charinfo-scdlen.RData")
+d_scd_c <- dout_merged
+
+## remove practice trials
+d_scd_c<-subset(d_scd_c,expt!="prac")
+#summary(d_scd_c)
+
+## code up blocks
+d_scd_c$c_block<-ifelse(d_scd_c$block==1,-1,1)
+#xtabs(~block+c_block,d_scd_c)
+#head(d_scd_c)
+
+## recode item ids (because we have same id in blocks):
+item2<-paste(d_scd_c$expt,"_",
+             d_scd_c$item,
+             sep="")
+
+d_scd_c$item2<-factor(item2)
+
+#Item level information:
+hnd1iteminfo<-read.table("../data/hnd1_aswords_stats",header=TRUE)
+hnd1iteminfo$item2<-factor(paste("hnd1","_",hnd1iteminfo$item,sep=""))
+hnd2iteminfo<-read.table("../data/hnd2_aswords_stats",header=TRUE)
+hnd2iteminfo$item2<-factor(paste("hnd2","_",hnd2iteminfo$item,sep=""))
+
+iteminfo<-rbind(hnd1iteminfo,
+                hnd2iteminfo)
+
+#summary(iteminfo)
+#iteminfo<-subset(iteminfo,word_freq!="NA")
+#iteminfo<-subset(iteminfo,word_bifreq!="NA")
+#iteminfo<-subset(iteminfo,type_bifreq!="NA")
+#dim(iteminfo)
+
+#summary(d_scd_c)
+d_scd_c<-subset(d_scd_c,word_id!="NA")
+#dim(d_scd_c)
+
+d_scd_c_merged<-merge(iteminfo,d_scd_c,
+                      by.x=c("item2","roi"),
+                      by.y=c("item2","word_id"))
+
+#colnames(d_scd_c_merged)
+#remove/rename duplicate columns
+#d_scd_c_merged[25] <- NULL  #textline1 (no need for this)
+#colnames(d_scd_c_merged)[3]<-"item"
+#colnames(d_scd_c_merged)[11]<-"word_len"
+#d_scd_c_merged[23] <- NULL  #item.y (same as 'item'/column3 above)
+#d_scd_c_merged[31] <- NULL  #word_len.y
+
+#summary(d_scd_c_merged)
+
+#summary(d_scd_c_merged$scd_len_out)
+
+lambda<-1/mean(d_scd_c_merged$scd_len_out,na.rm=T)
+
+hist(d_scd_c_merged$scd_len_out,freq=FALSE)
+x<-seq(0,66,by=0.01)
+lines(x,dexp(x,rate=lambda))
+
+#xtabs(~char_pos+subj,d_scd_c_merged)
+#xtabs(~char_pos+item2,d_scd_c_merged)
+
+#colnames(d_scd_c_merged)
+
+d_scd_c_merged<-d_scd_c_merged[,c(1,4,6,7,9,13,14,15,33,35,36)]
+
+scd<-d_scd_c_merged
+#summary(scd)
+#dim(scd)
+scd<-subset(scd,word_freq!="NA")
+scd<-subset(scd,word_bifreq!="NA")
+scd<-subset(scd,scd_len_out!="NA")
+scd<-subset(scd,plus_one_word_length!="NA")
+#summary(scd)
+#dim(scd)
+
+scd$c_syll_len<-scale(scd$syll_len,scale=T)
+scd$c_word_complex<-scale(scd$word_complex,scale=T)
+scd$c_word_freq<-scale(scd$word_freq,scale=T)
+scd$c_word_bifreq<-scale(scd$word_bifreq,scale=T)
+scd$c_SC<-scale(scd$SC,scale=T)
+scd$c_IC<-scale(scd$IC,scale=T)
+scd$c_nwl<-scale(scd$plus_one_word_length,scale=T)
+scd$c_twl<-scale(scd$target_word_length,scale=T)
+
+#remove sentences 64 and 70 from hnd2
+#Modification date:3/02/2016 (after article publication)
+scd <- subset(scd, item2!='hnd2_70')
+scd <- subset(scd, item2!='hnd2_64')
+```
+
+```{r analyzesaccadedata}
+scdnwl<-lmer(log(scd_len_out) ~ 
+       (c_syll_len+
+       c_word_complex+
+       c_word_freq+
+       c_word_bifreq+
+       c_nwl+   
+       +c_IC+
+       +c_SC)*c_block+
+       (1+(c_syll_len+
+          c_word_complex+
+          c_word_freq+
+          c_word_bifreq+
+          c_nwl+   
+          +c_IC+
+          +c_SC)*c_block||subj)+(1+(c_syll_len+
+                                      c_word_complex+
+                                      c_word_freq+
+                                      c_word_bifreq+
+                                      c_nwl+   
+                                      +c_IC+
+                                      +c_SC)*c_block||item2),scd)
+
+scdnwl<-lmer(log(scd_len_out) ~ 
+               (c_syll_len+
+                  c_word_complex+
+                  c_word_freq+
+                  c_word_bifreq+
+                  c_IC+
+                  c_SC)*c_block+
+               (1+(c_syll_len+
+                     c_word_complex+
+                     c_word_freq+
+                     c_word_bifreq+ 
+                     c_IC+
+                     c_SC)*c_block||subj)+
+               (1+(c_syll_len+
+                   c_word_complex+
+                   c_word_freq+
+                   c_word_bifreq+
+                   c_IC+
+                   c_SC)*c_block||item2),scd)
+
+summary(scdnwl)
+```
+
+```{r savesaccadedata}
+save(scd,file="scddata.Rda")
+```
+
+Probably not needed:
+```{r}
+## correlations between current word length and
+## next word length:
+plot(scd$syll_len,scd$target_word_length)
+
+meanscdlens<-with(scd,tapply(scd_len_out,IND=list(syll_len,plus_one_word_length),mean,na.rm=TRUE))
+
+library(xtable)
+scdcounts<-xtabs(~syll_len+plus_one_word_length,scd)
+
+round(scdcounts)
+round(meanscdlens,digits=2)
+
+xtable(round(meanscdlens,digits=2))
+
+## saccade lens are pretty similar in both sessions:
+with(scd,tapply(scd_len_out,factor(c_block),mean))
+with(scd,tapply(scd_len_out,factor(c_block),sd))
+
+barplot(meanscdlens,beside=TRUE,xlab="syllable length of word n",ylab="Mean saccade length (no. of syllables)")
+
+summary(scd)
+```
+
+```{r}
+## Stan analysis: includes twl:
+dat_logscd <- list(mu_prior=rep(0,16),
+                   subject=as.integer(factor(scd$subj)),
+                   item=as.integer(factor(scd$item2)),
+                   y=log(scd$scd_len_out), ## dep. var.
+                   twl=as.vector(scd$c_twl),
+                   sl = as.vector(scd$c_syll_len),
+                   complexity = as.vector(scd$c_word_complex),
+                   freq = as.vector(scd$c_word_freq),
+                   bifreq = as.vector(scd$c_word_bifreq),
+                   IC = as.vector(scd$c_IC),
+                   SC = as.vector(scd$c_SC),
+                   bl = scd$c_block,
+                   sl_bl = as.vector(scd$c_block*scd$c_syll_len),
+                   nwl_bl = as.vector(scd$c_block*scd$c_nwl),
+                   complexity_bl = as.vector(scd$c_block*scd$c_word_complex),
+                   freq_bl = as.vector(scd$c_block*scd$c_word_freq),
+                   bifreq_bl = as.vector(scd$c_block*scd$c_word_bifreq),
+                   IC_bl =  as.vector(scd$c_block*scd$c_IC),
+                   SC_bl = as.vector(scd$c_block*scd$c_SC),
+                   N = nrow(scd),
+                   I = length(unique(scd$subj)),
+                   K = length(unique(scd$item2)))
+
+str(dat_logscd)
+
+```{r }
+## Stan ready log saccade data:
+load("../data/datlogscd.Rda")
+
+model_osl <- stan("HusainEtAlHindiETtwl.Stan", 
+                  data = dat_logscd, 
+                  chains = 0)
+
+sflist <- 
+  mclapply(1:4, mc.cores = 4, 
+           function(i) stan(fit = model_osl, 
+                            data = dat_logscd,
+                            iter=2000,
+                            chains = 1, 
+                            chain_id = i, 
+                            refresh = -1))
+
+
+fitosl <- sflist2stanfit(sflist)
+```
+
+```{r eval=FALSE}
+plot(fitosl)
+```
+
+```{r}
+print(fitosl)
+```
+
+```{r eval=FALSE}
+mcmcosltwl<-as.matrix(fitosl)
+
+save(mcmcosltwl,file="mcmcosltwl.Rda")
+```
+
+# Formatting data for paper
+
+```{r}
+## formatting data for paper:
+load("../data/mcmcFPRT.Rda")
+cnames<-c("intercept","syll_len","cmplx","freq","bifreq","IC","SC",
+          "bl","bl:syll_len","bl:cmplx","bl:freq","bl:bifreq","bl:IC","bl:SC")
+FPRTres<-as.data.frame(mcmcFPRT[,1:14])
+colnames(FPRTres)<-cnames
+
+FPRTmeans<-round(colMeans(FPRTres),digits=3)
+lower<-rep(NA,14)
+upper<-rep(NA,14)
+for(i in 1:14){
+  lower<-round(quantile(FPRTres[,i],probs=0.025),digits=3)
+  upper<-round(quantile(FPRTres[,i],probs=0.975),digits=3)  
+}
+
+cbind(FPRTmeans,lower,upper)
+```
+
+   
+## Outgoing saccade length
+
+
+
+```{r}
+d_scd_c_merged$IC <- as.numeric(
+         as.character(d_scd_c_merged$IC))
+       
+hist(log(d_scd_c_merged$scd_len_out))
+
+xxx       
+scdlen<-lmer(log(scd_len_out) ~ 
+                      scale(word_len,scale=T)+
+                      scale(word_complex,scale=T)+  
+                      scale(word_freq,scale=T)+  
+                      scale(word_bifreq,scale=T)+
+                      scale(IC,scale=T)+                           
+                      scale(SC,scale=T)+
+                      #block+
+                      (scale(word_len,scale=T)+
+                         scale(word_complex,scale=T)+  
+                         scale(word_freq,scale=T)+  
+                         scale(word_bifreq,scale=T)+
+                         scale(IC,scale=T)+                           
+                         scale(SC,scale=T)
+                       #+block
+                       ||subj)+
+                      (scale(word_len,scale=T)+
+                         scale(word_complex,scale=T)+  
+                         scale(word_freq,scale=T)+  
+                         scale(word_bifreq,scale=T)+
+                         scale(IC,scale=T)+                           
+                         scale(SC,scale=T)
+                       #+block
+                       ||item2),
+                    d_scd_c_merged)
+
+summary(scdlen)
+
+scdlen_results <- summary(scdlen)$coefficients
+rownames(scdlen_results)<-rnames
+       
+qqPlot(residuals(scdlen))
+       
+xtable(scdlen_results)
+       
+summary(d_scd_c_merged)
+
+d_scd_c_merged<-subset(d_scd_c_merged,
+                              !is.na(d_scd_c_merged$word_freq))
+
+d_scd_c_merged<-subset(d_scd_c_merged,
+                              !is.na(d_scd_c_merged$word_bifreq))
+       
+d_scd_c_merged<-subset(d_scd_c_merged,
+                              !is.na(d_scd_c_merged$scd_len_out))
+              
+d_scd<-d_scd_c_merged
+       
+dat_logSacLen <- list(mu_prior=rep(0,7),
+                             subject=as.integer(factor(d_scd$subj)),
+                             item=as.integer(factor(d_scd$item)),
+                             y=log(d_scd$scd_len_out), ## dep. var.
+                             wl = as.vector(scale(d_scd$word_len,
+                                                  scale=T)),
+                             complexity = as.vector(scale(d_scd$word_complex,scale=T)),
+                             freq = as.vector(scale(d_scd$word_freq,
+                                                    scale=T)),
+                             bifreq = as.vector(scale(d_scd$word_bifreq,
+                                                      scale=T)),
+                             IC = as.vector(scale(d_scd$IC,
+                                                  scale=T)),
+                             SC = as.vector(scale(d_scd$SC,
+                                                  scale=T)),            
+                             N = nrow(d_scd),
+                             I = length(unique(d_scd$subj)),
+                             K = length(unique(d_scd$item)))
+       
+       model_ocl <- stan("HusainEtAlHindiET.Stan", 
+                         data = dat_logSacLen, 
+                         chains = 0)
+       
+       
+       sflist <- 
+         mclapply(1:4, mc.cores = 4, 
+                  function(i) stan(fit = model_ocl, 
+                                   data = dat_logSacLen,
+                                   iter=2000,
+                                   chains = 1, 
+                                   chain_id = i, 
+                                   refresh = -1))
+       
+       
+       fitosl <- sflist2stanfit(sflist)
+       
+       plot(fitosl)
+       
+       mcmcosl<-as.matrix(fitosl)
+       
+       save(mcmcosl,file="mcmcosl.Rda")
+       
+       op<-par(mfrow=c(6,4),pty="s")
+       for(i in 1:22){
+         hist(mcmcosl[,i],main=colnames(mcmcosl)[i])
+       }
+```   
+
+```{r}           
+       load("mcmcFPRT.Rda")
+       load("mcmcRPD.Rda")
+       load("mcmcTFT.Rda")
+       load("mcmcosl.Rda")
+       
+       ## FPRT results:
+       FPRTresults<-matrix(rep(NA,7*2),ncol=2)
+       for(i in 1:7){
+         FPRTresults[i,]<-round(quantile(probs=c(0.025,0.975),
+                                         mcmcFPRT[,i]),digits=2)
+       }
+       FPRTprobs<-rep(NA,7)
+       for(i in 1:7){
+         FPRTprobs[i]<-round(mean(mcmcFPRT[,i]>0),
+                             digits=2)
+       }
+       FPRTres<-data.frame(FPRTresults,p=FPRTprobs)
+       colnames(FPRTres)<-c("0.025th","0.975th","P(b<0)")
+       rnames<-c("Intercept","word length",
+                 "graphemic complexity",
+                 "word frequency",
+                 "word bigram freq.",
+                 "distance cost",
+                 "storage cost")
+       rownames(FPRTres)<-rnames
+       library(xtable)
+       xtable(FPRTres)
+       ## cbind these to the FPRT results
+       
+       ## RPD:
+       RPDresults<-matrix(rep(NA,7*2),ncol=2)
+       for(i in 1:7){
+         RPDresults[i,]<-round(quantile(probs=c(0.025,0.975),
+                                        mcmcRPD[,i]),digits=2)
+       }
+       RPDprobs<-rep(NA,7)
+       for(i in 1:7){
+         RPDprobs[i]<-round(mean(mcmcRPD[,i]>0),
+                            digits=2)
+       }
+       RPDres<-data.frame(RPDresults,p=RPDprobs)
+       colnames(RPDres)<-c("0.025th","0.975th","P(b<0)")
+       rnames<-c("Intercept","word length",
+                 "graphemic complexity",
+                 "word frequency",
+                 "word bigram freq.",
+                 "distance cost",
+                 "storage cost")
+       rownames(RPDres)<-rnames
+       xtable(RPDres)
+       
+       ##TFT:
+       TFTresults<-matrix(rep(NA,7*2),ncol=2)
+       for(i in 1:7){
+         TFTresults[i,]<-round(quantile(probs=c(0.025,0.975),
+                                        mcmcTFT[,i]),digits=2)
+       }
+       TFTprobs<-rep(NA,7)
+       for(i in 1:7){
+         TFTprobs[i]<-round(mean(mcmcTFT[,i]>0),
+                            digits=2)
+       }
+       TFTres<-data.frame(TFTresults,p=TFTprobs)
+       colnames(TFTres)<-c("0.025th","0.975th","P(b<0)")
+       rnames<-c("Intercept","word length",
+                 "graphemic complexity",
+                 "word frequency",
+                 "word bigram freq.",
+                 "distance cost",
+                 "storage cost")
+       rownames(TFTres)<-rnames
+       xtable(TFTres)
+       
+       ## outward saccade length:
+       oslresults<-matrix(rep(NA,7*2),ncol=2)
+       for(i in 1:7){
+         oslresults[i,]<-round(quantile(probs=c(0.025,0.975),
+                                        mcmcosl[,i]),digits=2)
+       }
+       oslprobs<-rep(NA,7)
+       for(i in 1:7){
+         oslprobs[i]<-round(mean(mcmcosl[,i]>0),
+                            digits=2)
+       }
+       oslres<-data.frame(oslresults,p=oslprobs)
+       colnames(oslres)<-c("0.025th","0.975th","P(b<0)")
+       rnames<-c("Intercept","word length",
+                 "graphemic complexity",
+                 "word frequency",
+                 "word bigram freq.",
+                 "distance cost",
+                 "storage cost")
+       rownames(oslres)<-rnames
+       xtable(oslres)
+       
+       
+       
+       
+       ## P0:xxx
+       
+       ## log duration as predicted by distance from center of word:
+       ##
+       #the saccade length analysis for character level information:
+        
+       load("../data/H_allsubjects-fix-charinfo-scdlen.RData")
+       d_scd_c <- dout_merged
+       
+       d_scd_c<-subset(d_scd_c,expt!="prac")
+       summary(d_scd_c)
+       
+       #consider Hindi data only from block 1
+       d_scd_c<-subset(d_scd_c,block==1)
+       
+       item2<-paste(d_scd_c$expt,"_",d_scd_c$item,sep="")
+       
+       d_scd_c$item2<-factor(item2)
+       
+       ## recode char position:
+       ## computing the position of a character within the word, 
+       ## how far away from the centre
+       c_char_pos<- d_scd_c$char_pos-d_scd_c$word_len/2
+       
+       d_scd_c$c_char_pos<-c_char_pos
+       
+       summary(d_scd_c)
+```
+
+```{r}
+       ## landing site distribution:
+       ## optimal viewing position: (in the centre)
+       ## See: http://www.ncbi.nlm.nih.gov/pubmed/11718792
+       pdf("ETpaperHusainEtAl/Hindi-landingsitedistribution.pdf")
+       hist(d_scd_c$c_char_pos, xlab="syllable position", main="Landing site distribution")
+       dev.off()
+       
+       mean_durs<-with(d_scd_c,tapply(log(dur),
+                                      c_char_pos,
+                                      mean,na.rm=T))
+       
+       ## check inverted optimal viewing position:
+       barplot(mean_durs)
+       
+       ## inverted optimal viewing position: 
+       # (larger duration at the centre compared to when further away from the centre)
+       # seems to be the case: t=-1.94
+       summary(IOVPm0<-lmer(log(dur) ~ abs(c_char_pos) + (abs(c_char_pos)||subj)+(abs(c_char_pos)||item2), d_scd_c))
+       
+       qqPlot(residuals(m0))
+```
+   
+```{r}              
+## formatting Stan results:
+load("mcmcFPRT.Rda")
+load("mcmcRPD.Rda")
+load("mcmcTFT.Rda")
+load("mcmcosl.Rda")
+
+factor_names<-c("Int","sl","comp","freq","bifreq","IC","SC","block","sl x block",
+    "comp x block",
+    "freq x block",
+    "bigram x block",
+    "IC x block",
+    "SC x block")
+
+## FPRT:
+fprtres<-matrix(rep(NA,14*3),ncol=3)
+for(i in 1:14){
+fprtres[i,1]<-m<-mean(mcmcFPRT[,i])
+fprtres[i,c(2,3)]<-intrvl<-quantile(mcmcFPRT[,i],probs=c(0.025,0.975))
+}
+
+rownames(fprtres)<-factor_names
+colnames(fprtres)<-c("mean","lower","upper")
+
+library(xtable)
+xtable(fprtres,digits=rep(4,4))
+
+## freq:
+mean(mcmcFPRT[,4]<0)
+## IC:
+mean(mcmcFPRT[,6]>0)
+## SC:
+mean(mcmcFPRT[,7]>0)
+## block:
+mean(mcmcFPRT[,8]<0)
+
+## RPD
+rpdres<-matrix(rep(NA,14*3),ncol=3)
+for(i in 1:14){
+  rpdres[i,1]<-m<-mean(mcmcRPD[,i])
+  rpdres[i,c(2,3)]<-intrvl<-quantile(mcmcRPD[,i],probs=c(0.025,0.975))
+}
+
+rownames(rpdres)<-factor_names
+colnames(rpdres)<-c("mean","lower","upper")
+
+library(xtable)
+xtable(rpdres,digits=rep(4,4))
+
+## SC:
+mean(mcmcRPD[,7]<0)
+
+
+## TFT
+tftres<-matrix(rep(NA,14*3),ncol=3)
+for(i in 1:14){
+  tftres[i,1]<-m<-mean(mcmcTFT[,i])
+  tftres[i,c(2,3)]<-intrvl<-quantile(mcmcTFT[,i],probs=c(0.025,0.975))
+}
+
+rownames(tftres)<-factor_names
+colnames(tftres)<-c("mean","lower","upper")
+
+library(xtable)
+xtable(tftres,digits=rep(4,4))
+
+## OSL
+
+factor_names<-c("Int","sl","nextsl","comp","freq","bifreq","IC","SC","block","sl x block","nextsl x block",
+                "comp x block",
+                "freq x block",
+                "bigram x block",
+                "IC x block",
+                "SC x block")
+
+
+oslres<-matrix(rep(NA,16*3),ncol=3)
+for(i in 1:16){
+  oslres[i,1]<-m<-mean(mcmcosl[,i])
+  oslres[i,c(2,3)]<-intrvl<-quantile(mcmcosl[,i],probs=c(0.025,0.975))
+}
+
+rownames(oslres)<-factor_names
+colnames(oslres)<-c("mean","lower","upper")
+
+library(xtable)
+xtable(oslres,digits=rep(4,4))
+
+## target word length:
+load("mcmcosltwl.Rda")
+factor_names<-c("Int","sl","targetsl","comp","freq","bifreq","IC","SC","block","sl x block","targetsl x block",
+                "comp x block",
+                "freq x block",
+                "bigram x block",
+                "IC x block",
+                "SC x block")
+
+
+oslrestwl<-matrix(rep(NA,16*3),ncol=3)
+for(i in 1:16){
+  oslrestwl[i,1]<-m<-mean(mcmcosltwl[,i])
+  oslrestwl[i,c(2,3)]<-intrvl<-quantile(mcmcosltwl[,i],probs=c(0.025,0.975))
+}
+
+rownames(oslrestwl)<-factor_names
+colnames(oslrestwl)<-c("mean","lower","upper")
+
+library(xtable)
+xtable(oslrestwl,digits=rep(4,4))
+```

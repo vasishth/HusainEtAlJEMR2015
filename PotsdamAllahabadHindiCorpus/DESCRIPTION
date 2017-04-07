@@ -1,0 +1,9 @@
+Package: PotsdamAllahabadHindiCorpus
+Title: Data and Code for Husain, Narayanan, and Vasishth 2015, Journal of Eye Movement Research.
+Version: 0.0.0.9000
+Authors@R: person("Shravan", "Vasishth", email = "vasishth.shravan@gmail.com", role = c("aut", "cre"))
+Description: Provides all code and data used in the JEMR 2015 paper.
+Depends: R (>= 3.3.2)
+License: MIT License
+Encoding: UTF-8
+LazyData: true
