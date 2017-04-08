@@ -1,5 +1,5 @@
 # HusainEtAlJEMR2015
-Data and code relating to Husain, Narayanan, Vasishth, 2015. Integration and prediction difficulty in Hindi sentence comprehension: Evidence from an eye-tracking corpus. Journal of Eye Movement Research, 8(2):1-12, 2015.
+Data and code relating to [Husain, Narayanan, Vasishth, 2015. Integration and prediction difficulty in Hindi sentence comprehension: Evidence from an eye-tracking corpus. Journal of Eye Movement Research, 8(2):1-12, 2015.](http://www.ling.uni-potsdam.de/~vasishth/pdfs/HusainEtAlETHindiJEMR2015.pdf)
 
 This repository contains the Potsdam Allahabad Eyetracking Corpus. 
 
